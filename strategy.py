@@ -65,9 +65,7 @@ def enrich_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def check_market_environment(index_df: pd.DataFrame) -> dict:
-    df = enrich_indicators(index_df)
-    latest = df.iloc[-1]
+def _build_market_environment(latest: pd.Series) -> dict:
     above_ma20 = bool(latest["close"] > latest["close_ma20"]) if pd.notna(latest["close_ma20"]) else False
     gain_gt_1 = bool(latest["daily_gain_pct"] > config.MARKET_DAILY_GAIN_PCT) if pd.notna(latest["daily_gain_pct"]) else False
     return {
@@ -76,6 +74,20 @@ def check_market_environment(index_df: pd.DataFrame) -> dict:
         "gain_gt_1pct": gain_gt_1,
         "signal_date": str(latest["date"].date()),
     }
+
+
+def check_market_environment(index_df: pd.DataFrame) -> dict:
+    df = enrich_indicators(index_df)
+    latest = df.iloc[-1]
+    return _build_market_environment(latest)
+
+
+def build_market_environment_map(index_df: pd.DataFrame) -> dict[str, dict]:
+    df = enrich_indicators(index_df)
+    market_map: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        market_map[str(row["date"].date())] = _build_market_environment(row)
+    return market_map
 
 
 def _is_doji_like(row: pd.Series) -> bool:
@@ -186,12 +198,16 @@ def _build_signal_score(
     return score, signal_group, oversold_level
 
 
-def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) -> Optional[SignalResult]:
-    if stock_df is None or stock_df.empty or len(stock_df) < 40:
+def _find_signal_in_enriched_df(
+    code: str,
+    name: str,
+    df: pd.DataFrame,
+    today_idx: int,
+    market_env: dict,
+) -> Optional[SignalResult]:
+    if df is None or df.empty or len(df) < 40 or today_idx < 39:
         return None
 
-    df = enrich_indicators(stock_df)
-    today_idx = len(df) - 1
     today = df.iloc[today_idx]
     yesterday = df.iloc[today_idx - 1]
     market_passed = bool(market_env.get("passed", False))
@@ -395,3 +411,38 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             best_candidate = candidate
 
     return best_candidate
+
+
+def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) -> Optional[SignalResult]:
+    if stock_df is None or stock_df.empty or len(stock_df) < 40:
+        return None
+    df = enrich_indicators(stock_df)
+    return _find_signal_in_enriched_df(
+        code=code,
+        name=name,
+        df=df,
+        today_idx=len(df) - 1,
+        market_env=market_env,
+    )
+
+
+def find_signal_on_date(
+    code: str,
+    name: str,
+    enriched_stock_df: pd.DataFrame,
+    signal_date: str,
+    market_env: dict,
+) -> Optional[SignalResult]:
+    if enriched_stock_df is None or enriched_stock_df.empty:
+        return None
+    date_series = enriched_stock_df["date"].dt.strftime("%Y-%m-%d")
+    matched = enriched_stock_df.index[date_series == signal_date].tolist()
+    if not matched:
+        return None
+    return _find_signal_in_enriched_df(
+        code=code,
+        name=name,
+        df=enriched_stock_df,
+        today_idx=matched[-1],
+        market_env=market_env,
+    )

@@ -302,8 +302,6 @@ def fetch_stock_ohlcv(code: str, days: Optional[int] = None) -> Optional[pd.Data
         days = config.HISTORY_DAYS
     min_date = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     cached = _load_kline_from_db("kline_cache", code, min_date)
-    if cached is not None and len(cached) >= 60:
-        return cached
     if cached is not None and not _needs_refresh(cached):
         return cached
 
@@ -324,8 +322,6 @@ def fetch_index_daily(symbol: Optional[str] = None, days: Optional[int] = None) 
         days = config.HISTORY_DAYS
     min_date = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     cached = _load_kline_from_db("index_cache", symbol, min_date)
-    if cached is not None and len(cached) >= 60:
-        return cached
     if cached is not None and not _needs_refresh(cached):
         return cached
 

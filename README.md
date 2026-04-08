@@ -53,6 +53,8 @@
   策略识别与评分逻辑
 - [data_fetcher.py](/Users/admin/Documents/codeHub/N-strategy/data_fetcher.py)
   数据获取与缓存
+- [backtest.py](/Users/admin/Documents/codeHub/N-strategy/backtest.py)
+  历史回测入口
 - [notifier.py](/Users/admin/Documents/codeHub/N-strategy/notifier.py)
   飞书通知
 - [config.py](/Users/admin/Documents/codeHub/N-strategy/config.py)
@@ -192,6 +194,16 @@ conda run -n n-strategy python main.py --test-notify
 
 - [n-strategy-scan.yml](/Users/admin/Documents/codeHub/N-strategy/.github/workflows/n-strategy-scan.yml)
 
+### 0. SQLite 缓存说明
+
+GitHub Actions 使用的是临时 runner，默认每次都是一台新机器。
+
+为了避免每次都从零抓取全市场数据，工作流已经把本地缓存库：
+
+- `n_strategy.db`
+
+接入 Actions 缓存。工作流启动时会先恢复历史数据库，再增量补充最新行情，通常能明显缩短后续扫描时间。
+
 ### 1. 配置 GitHub Secret
 
 打开仓库：
@@ -216,11 +228,64 @@ conda run -n n-strategy python main.py --test-notify
 
 1. 安装依赖
 2. 做语法检查
-3. 发送一条纯文本测试消息
-4. 在北京时间 15:20 的定时任务或手动触发时进行全市场扫描
-5. 发送纯文本扫描摘要
+3. 在北京时间 15:20 的定时任务或手动触发时进行全市场扫描
+4. 发送纯文本扫描摘要
 
-## 七、通知内容说明
+补充说明：
+
+- 只有手动 `Run workflow` 时，才会额外发送一条测试消息
+- `push` 和 `schedule` 不会再发送测试消息，避免重复通知
+## 七、回测使用方式
+
+### 1. 小范围回测
+
+```bash
+conda run -n n-strategy python backtest.py \
+  --start-date 2026-01-01 \
+  --end-date 2026-04-08 \
+  --limit 100 \
+  --top 10
+```
+
+说明：
+
+- `--start-date` 和 `--end-date` 为回测区间
+- `--limit 100` 适合先验证程序逻辑和回测口径
+- 默认统计 `1/3/5/10` 个交易日收益
+
+### 2. 包含候选观察一起回测
+
+```bash
+conda run -n n-strategy python backtest.py \
+  --start-date 2026-01-01 \
+  --end-date 2026-04-08 \
+  --limit 200 \
+  --include-fallback
+```
+
+说明：
+
+- 默认只统计 `正式命中`
+- 加上 `--include-fallback` 后，会把 `候选观察` 一起纳入收益统计
+
+### 3. 回测输出
+
+回测会生成两个文件：
+
+- `backtest_trades.csv`
+  每笔历史信号明细，包括信号日期、评分、是否候选、未来收益
+- `backtest_summary.json`
+  汇总统计，包括样本数、胜率、平均收益、分组分布
+
+### 4. 回测口径
+
+当前回测按更贴近盘后策略的方式处理：
+
+- 信号在当日收盘后确认
+- 默认按下一交易日开盘价介入
+- 统计未来 `1/3/5/10` 个交易日的收盘收益
+
+## 八、通知内容说明
 
 通知会尽量保持简洁，只保留核心信息：
 
@@ -231,9 +296,9 @@ conda run -n n-strategy python main.py --test-notify
 - 涨幅与量比
 - 回调信息
 - 触发说明
-- 候选原因（如果有）
+- 缺少触发条件（如果有）
 
-## 八、补充说明
+## 九、补充说明
 
 - 如果你当前使用的是飞书 Flow Webhook，建议保持 `FEISHU_MESSAGE_MODE=text`
 - 如果未来切换到真正支持机器人卡片的 webhook，再考虑恢复卡片通知
