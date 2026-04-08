@@ -6,6 +6,8 @@ on:
       - main
   workflow_dispatch:
   schedule:
+    # GitHub Actions uses UTC.
+    # 07:20 UTC = 15:20 Asia/Shanghai, suitable for A-share post-close scans.
     - cron: "20 7 * * 1-5"
 
 jobs:
