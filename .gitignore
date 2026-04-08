@@ -6,4 +6,6 @@ __pycache__/
 .venv/
 n_strategy.db
 n_strategy_signals.csv
+backtest_trades*.csv
+backtest_summary*.json
 *.log

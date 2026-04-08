@@ -193,6 +193,7 @@ conda run -n n-strategy python main.py --test-notify
 工作流文件：
 
 - [n-strategy-scan.yml](/Users/admin/Documents/codeHub/N-strategy/.github/workflows/n-strategy-scan.yml)
+- [n-strategy-backtest.yml](/Users/admin/Documents/codeHub/N-strategy/.github/workflows/n-strategy-backtest.yml)
 
 ### 0. SQLite 缓存说明
 
@@ -235,6 +236,19 @@ GitHub Actions 使用的是临时 runner，默认每次都是一台新机器。
 
 - 只有手动 `Run workflow` 时，才会额外发送一条测试消息
 - `push` 和 `schedule` 不会再发送测试消息，避免重复通知
+
+### 4. 每周回测工作流
+
+仓库额外提供了一个独立的回测工作流：
+
+- `n-strategy-backtest`
+
+默认行为：
+
+- 每周一北京时间 `16:45` 自动执行
+- 同时回测最近 `6 个月` 和最近 `1 个月`
+- 自动上传 `CSV` 明细和 `JSON` 汇总到 Actions Artifacts
+- 终端日志会直接打印收益、斜率、最大回撤等指标
 ## 七、回测使用方式
 
 ### 1. 小范围回测
@@ -252,6 +266,23 @@ conda run -n n-strategy python backtest.py \
 - `--start-date` 和 `--end-date` 为回测区间
 - `--limit 100` 适合先验证程序逻辑和回测口径
 - 默认统计 `1/3/5/10` 个交易日收益
+- 回测过程中会自动打印进度、累计信号数和耗时
+
+### 1.1 最近半年回测
+
+```bash
+conda run --no-capture-output -n n-strategy python backtest.py \
+  --months 6 \
+  --include-fallback \
+  --top 10 \
+  --progress-every 200
+```
+
+说明：
+
+- `--months 6` 自动回测最近半年
+- `--include-fallback` 可以一起观察候选信号在近期是否有效
+- `--progress-every 200` 表示每处理 200 只股票打印一次进度
 
 ### 2. 包含候选观察一起回测
 
@@ -275,7 +306,7 @@ conda run -n n-strategy python backtest.py \
 - `backtest_trades.csv`
   每笔历史信号明细，包括信号日期、评分、是否候选、未来收益
 - `backtest_summary.json`
-  汇总统计，包括样本数、胜率、平均收益、分组分布
+  汇总统计，包括样本数、胜率、平均收益、累计收益、斜率、最大回撤、分组分布
 
 ### 4. 回测口径
 
@@ -284,6 +315,17 @@ conda run -n n-strategy python backtest.py \
 - 信号在当日收盘后确认
 - 默认按下一交易日开盘价介入
 - 统计未来 `1/3/5/10` 个交易日的收盘收益
+
+### 5. 回测核心指标说明
+
+- `平均收益`
+  单笔信号在指定持有周期下的平均收益
+- `累计收益`
+  把所有信号按时间顺序复利累乘后的结果
+- `斜率`
+  收益曲线相对交易序列的线性斜率，越大代表策略近期越有持续性
+- `最大回撤`
+  收益曲线从阶段高点回落的最大幅度，用于观察策略抗波动能力
 
 ## 八、通知内容说明
 
