@@ -81,6 +81,41 @@ def run_scan(limit: int, workers: int, output: str, notify: bool = False, top: i
     return output_df
 
 
+def print_scan_summary(result_df: pd.DataFrame, top: int) -> None:
+    if result_df.empty:
+        print("扫描结果: 0 只")
+        return
+
+    formal_df = result_df[result_df["is_fallback"] == False].copy()
+    fallback_df = result_df[result_df["is_fallback"] == True].copy()
+
+    print(f"扫描结果: 共 {len(result_df)} 只")
+    print(f"正式命中: {len(formal_df)} 只")
+    print(f"候选观察: {len(fallback_df)} 只")
+
+    if not formal_df.empty:
+        print("【正式命中】")
+        for idx, row in enumerate(formal_df.head(top).to_dict(orient="records"), start=1):
+            print(
+                f"{idx}. {row['code']} {row['name']} | "
+                f"{row['signal_group']} | 分数 {row['signal_score']} | "
+                f"{row['oversold_level']} | {row['candle_pattern']}"
+            )
+            print(f"   触发: {row['trigger_reason']}")
+
+    if not fallback_df.empty:
+        print("【候选观察前三】")
+        for idx, row in enumerate(fallback_df.head(3).to_dict(orient="records"), start=1):
+            print(
+                f"{idx}. {row['code']} {row['name']} | "
+                f"{row['signal_group']} | 分数 {row['signal_score']} | "
+                f"{row['oversold_level']} | {row['candle_pattern']}"
+            )
+            if row.get("fallback_reason"):
+                print(f"   缺少触发条件: {row['fallback_reason']}")
+            print(f"   触发: {row['trigger_reason']}")
+
+
 if __name__ == "__main__":
     args = parse_args()
     if args.test_notify:
@@ -94,4 +129,4 @@ if __name__ == "__main__":
         if not args.allow_empty:
             raise SystemExit(0)
     else:
-        print(result_df.to_string(index=False))
+        print_scan_summary(result_df, top=args.top)

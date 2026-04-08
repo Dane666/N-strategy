@@ -34,6 +34,7 @@ jobs:
         run: python -m compileall .
 
       - name: Test Feishu secret
+        if: github.event_name == 'workflow_dispatch'
         run: python main.py --test-notify
 
       - name: Run scanner
