@@ -89,6 +89,19 @@ def _fetch_kline_tencent(code: str, count: int = 500, is_index: bool = False) ->
         return None
 
 
+def _merge_kline_frames(cached_df: Optional[pd.DataFrame], fresh_df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    frames = []
+    if cached_df is not None and not cached_df.empty:
+        frames.append(cached_df.copy())
+    if fresh_df is not None and not fresh_df.empty:
+        frames.append(fresh_df.copy())
+    if not frames:
+        return None
+    merged = pd.concat(frames, ignore_index=True)
+    merged = merged.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+    return merged
+
+
 def _normalize_loaded_kline(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     if df.empty:
         return None
@@ -146,6 +159,32 @@ def _save_kline_to_db(table: str, code: str, df: pd.DataFrame):
             save_df[columns].to_sql(table, conn, if_exists="append", index=False)
 
 
+def _get_cache_meta(table: str, code: str, meta_key: str) -> Optional[str]:
+    try:
+        with cache_db.get_connection(readonly=True) as conn:
+            row = conn.execute(
+                "SELECT meta_value FROM cache_meta WHERE table_name=? AND code=? AND meta_key=?",
+                (table, code, meta_key),
+            ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _set_cache_meta(table: str, code: str, meta_key: str, meta_value: str):
+    with cache_db._write_lock:
+        with cache_db.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO cache_meta(table_name, code, meta_key, meta_value)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(table_name, code, meta_key)
+                DO UPDATE SET meta_value=excluded.meta_value
+                """,
+                (table, code, meta_key, meta_value),
+            )
+
+
 def _needs_refresh(cached_df: Optional[pd.DataFrame]) -> bool:
     if cached_df is None or cached_df.empty:
         return True
@@ -153,6 +192,17 @@ def _needs_refresh(cached_df: Optional[pd.DataFrame]) -> bool:
     if hasattr(last_date, "date"):
         last_date = last_date.date()
     return last_date < datetime.today().date()
+
+
+def _should_full_refresh(table: str, code: str, refresh_interval_days: int) -> bool:
+    last_refresh = _get_cache_meta(table, code, "last_full_refresh")
+    if not last_refresh:
+        return True
+    try:
+        last_dt = datetime.fromisoformat(last_refresh)
+    except ValueError:
+        return True
+    return (datetime.now() - last_dt).days >= refresh_interval_days
 
 
 def _save_stock_list_to_db(df: pd.DataFrame):
@@ -305,11 +355,24 @@ def fetch_stock_ohlcv(code: str, days: Optional[int] = None) -> Optional[pd.Data
     if cached is not None and not _needs_refresh(cached):
         return cached
 
+    needs_full_refresh = (
+        cached is None
+        or cached.empty
+        or len(cached) < 60
+        or _should_full_refresh("kline_cache", code, config.KLINE_FULL_REFRESH_INTERVAL_DAYS)
+    )
+    fetch_count = config.KLINE_FULL_FETCH_COUNT if needs_full_refresh else config.KLINE_INCREMENTAL_FETCH_COUNT
+
     for attempt in range(config.MAX_RETRY + 1):
-        df = _fetch_kline_tencent(code, count=500, is_index=False)
+        df = _fetch_kline_tencent(code, count=fetch_count, is_index=False)
         if df is not None and not df.empty:
-            _save_kline_to_db("kline_cache", code, df)
-            return df[df["date"] >= pd.Timestamp(min_date)].reset_index(drop=True)
+            merged = df if needs_full_refresh else _merge_kline_frames(cached, df)
+            if merged is None or merged.empty:
+                return cached
+            _save_kline_to_db("kline_cache", code, merged if needs_full_refresh else df)
+            if needs_full_refresh:
+                _set_cache_meta("kline_cache", code, "last_full_refresh", datetime.now().isoformat())
+            return merged[merged["date"] >= pd.Timestamp(min_date)].reset_index(drop=True)
         if attempt < config.MAX_RETRY:
             time.sleep(0.5 + attempt)
     return cached
@@ -325,11 +388,24 @@ def fetch_index_daily(symbol: Optional[str] = None, days: Optional[int] = None) 
     if cached is not None and not _needs_refresh(cached):
         return cached
 
+    needs_full_refresh = (
+        cached is None
+        or cached.empty
+        or len(cached) < 60
+        or _should_full_refresh("index_cache", symbol, config.INDEX_FULL_REFRESH_INTERVAL_DAYS)
+    )
+    fetch_count = config.KLINE_FULL_FETCH_COUNT if needs_full_refresh else config.KLINE_INCREMENTAL_FETCH_COUNT
+
     for attempt in range(config.MAX_RETRY + 1):
-        df = _fetch_kline_tencent(symbol, count=500, is_index=True)
+        df = _fetch_kline_tencent(symbol, count=fetch_count, is_index=True)
         if df is not None and not df.empty:
-            _save_kline_to_db("index_cache", symbol, df)
-            return df[df["date"] >= pd.Timestamp(min_date)].reset_index(drop=True)
+            merged = df if needs_full_refresh else _merge_kline_frames(cached, df)
+            if merged is None or merged.empty:
+                return cached
+            _save_kline_to_db("index_cache", symbol, merged if needs_full_refresh else df)
+            if needs_full_refresh:
+                _set_cache_meta("index_cache", symbol, "last_full_refresh", datetime.now().isoformat())
+            return merged[merged["date"] >= pd.Timestamp(min_date)].reset_index(drop=True)
         if attempt < config.MAX_RETRY:
             time.sleep(0.5 + attempt)
     return cached

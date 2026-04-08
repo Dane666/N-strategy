@@ -121,6 +121,18 @@ def _compute_equity_metrics(valid_returns: pd.Series) -> dict:
 
 
 def _build_summary(trades_df: pd.DataFrame, holding_days: list[int]) -> dict:
+    def build_segment(segment_df: pd.DataFrame) -> dict:
+        segment = {
+            "count": int(len(segment_df)),
+            "avg_signal_score": round(float(segment_df["signal_score"].mean()), 2) if not segment_df.empty else 0.0,
+            "returns": {},
+        }
+        for holding in holding_days:
+            column = f"ret_{holding}d"
+            valid = segment_df[column].dropna() if not segment_df.empty else pd.Series(dtype=float)
+            segment["returns"][f"{holding}d"] = _compute_equity_metrics(valid)
+        return segment
+
     summary: dict[str, object] = {
         "total_signals": int(len(trades_df)),
         "formal_signals": int((~trades_df["is_fallback"]).sum()) if not trades_df.empty else 0,
@@ -128,6 +140,11 @@ def _build_summary(trades_df: pd.DataFrame, holding_days: list[int]) -> dict:
         "avg_signal_score": round(float(trades_df["signal_score"].mean()), 2) if not trades_df.empty else 0.0,
         "by_group": {},
         "returns": {},
+        "segments": {
+            "all": build_segment(trades_df),
+            "formal": build_segment(trades_df[trades_df["is_fallback"] == False].copy()) if not trades_df.empty else build_segment(pd.DataFrame()),
+            "fallback": build_segment(trades_df[trades_df["is_fallback"] == True].copy()) if not trades_df.empty else build_segment(pd.DataFrame()),
+        },
     }
 
     if trades_df.empty:
@@ -302,6 +319,18 @@ def print_summary(summary: dict, trades_df: pd.DataFrame, top: int) -> None:
             f"斜率 {stats['equity_slope_pct_per_trade']} | "
             f"最大回撤 {stats['max_drawdown_pct']}%"
         )
+
+    holding_key = f"{config.BACKTEST_NOTIFY_HOLDING_DAY}d"
+    if holding_key in summary["segments"]["all"]["returns"]:
+        _log(f"{holding_key} 分组统计:")
+        for seg_key, seg_label in (("all", "整体"), ("formal", "正式命中"), ("fallback", "候选观察")):
+            stats = summary["segments"][seg_key]["returns"][holding_key]
+            _log(
+                f"- {seg_label}: 样本 {summary['segments'][seg_key]['count']} | "
+                f"胜率 {stats['win_rate_pct']}% | "
+                f"斜率 {stats['equity_slope_pct_per_trade']} | "
+                f"最大回撤 {stats['max_drawdown_pct']}%"
+            )
 
     if trades_df.empty:
         _log("没有生成可用于回测的历史信号。")

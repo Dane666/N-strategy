@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from datetime import datetime
 
 import requests
 
@@ -204,6 +205,68 @@ def send_test_notification():
         ),
         enabled=config.FEISHU_ENABLED,
     )
+
+
+def build_backtest_window_line(summary: dict, label: str, holding_day: int) -> list[str]:
+    holding_key = f"{holding_day}d"
+    all_stats = summary.get("segments", {}).get("all", {}).get("returns", {}).get(holding_key, {})
+    formal_stats = summary.get("segments", {}).get("formal", {}).get("returns", {}).get(holding_key, {})
+    fallback_stats = summary.get("segments", {}).get("fallback", {}).get("returns", {}).get(holding_key, {})
+    return [
+        f"【{label}】{holding_key}口径",
+        (
+            f"整体: 样本 {summary.get('segments', {}).get('all', {}).get('count', 0)} | "
+            f"胜率 {all_stats.get('win_rate_pct')}% | "
+            f"斜率 {all_stats.get('equity_slope_pct_per_trade')} | "
+            f"回撤 {all_stats.get('max_drawdown_pct')}%"
+        ),
+        (
+            f"正式: 样本 {summary.get('segments', {}).get('formal', {}).get('count', 0)} | "
+            f"胜率 {formal_stats.get('win_rate_pct')}% | "
+            f"斜率 {formal_stats.get('equity_slope_pct_per_trade')} | "
+            f"回撤 {formal_stats.get('max_drawdown_pct')}%"
+        ),
+        (
+            f"候选: 样本 {summary.get('segments', {}).get('fallback', {}).get('count', 0)} | "
+            f"胜率 {fallback_stats.get('win_rate_pct')}% | "
+            f"斜率 {fallback_stats.get('equity_slope_pct_per_trade')} | "
+            f"回撤 {fallback_stats.get('max_drawdown_pct')}%"
+        ),
+    ]
+
+
+def build_backtest_compare_message(summary_1m: dict, summary_6m: dict, holding_day: int) -> str:
+    one_month = summary_1m.get("segments", {}).get("all", {}).get("returns", {}).get(f"{holding_day}d", {})
+    six_month = summary_6m.get("segments", {}).get("all", {}).get("returns", {}).get(f"{holding_day}d", {})
+
+    def _delta(key: str) -> str:
+        a = one_month.get(key)
+        b = six_month.get(key)
+        if a is None or b is None:
+            return "NA"
+        return str(round(a - b, 2))
+
+    lines = [
+        "周度回测摘要",
+        f"比较口径: {holding_day}日收益",
+        "",
+        *build_backtest_window_line(summary_1m, "近1个月", holding_day),
+        "",
+        *build_backtest_window_line(summary_6m, "近6个月", holding_day),
+        "",
+        "【近期变化】近1个月 相对 近6个月",
+        f"胜率变化: {_delta('win_rate_pct')}%",
+        f"斜率变化: {_delta('equity_slope_pct_per_trade')}",
+        f"回撤变化: {_delta('max_drawdown_pct')}%",
+    ]
+    return "\n".join(lines).strip()
+
+
+def notify_backtest_compare(summary_1m: dict, summary_6m: dict, holding_day: int):
+    end_date = summary_1m.get("end_date") or summary_6m.get("end_date") or datetime.now().date().isoformat()
+    title = f"N字策略周回测 {end_date}"
+    content = build_backtest_compare_message(summary_1m, summary_6m, holding_day)
+    send_feishu_msg(title=title, content=content, enabled=config.FEISHU_ENABLED)
 
 
 def notify_scan_result(signal_rows: list[dict], market_env: dict, scanned_count: int):

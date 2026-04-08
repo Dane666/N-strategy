@@ -9,6 +9,9 @@ on:
 jobs:
   backtest:
     runs-on: ubuntu-latest
+    env:
+      FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      FEISHU_MESSAGE_MODE: text
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +31,15 @@ jobs:
           key: n-strategy-db-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             n-strategy-db-${{ runner.os }}-
+
+      - name: Inspect SQLite cache
+        run: |
+          if [ -f n_strategy.db ]; then
+            echo "cache_db_restored=true"
+            ls -lh n_strategy.db
+          else
+            echo "cache_db_restored=false"
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -59,3 +71,35 @@ jobs:
           path: |
             backtest_trades_${{ matrix.window.label }}.csv
             backtest_summary_${{ matrix.window.label }}.json
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: backtest
+    if: always()
+    env:
+      FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      FEISHU_MESSAGE_MODE: text
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download backtest artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Send backtest summary
+        run: |
+          python backtest_notify.py \
+            --summary-1m artifacts/n-strategy-backtest-1m/backtest_summary_1m.json \
+            --summary-6m artifacts/n-strategy-backtest-6m/backtest_summary_6m.json

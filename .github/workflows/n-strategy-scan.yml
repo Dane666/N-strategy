@@ -28,6 +28,15 @@ jobs:
           restore-keys: |
             n-strategy-db-${{ runner.os }}-
 
+      - name: Inspect SQLite cache
+        run: |
+          if [ -f n_strategy.db ]; then
+            echo "cache_db_restored=true"
+            ls -lh n_strategy.db
+          else
+            echo "cache_db_restored=false"
+          fi
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:

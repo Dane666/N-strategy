@@ -67,5 +67,14 @@ def init_db():
             updated_at TEXT
         )"""
         )
+        cursor.execute(
+            """CREATE TABLE IF NOT EXISTS cache_meta (
+            table_name TEXT,
+            code TEXT,
+            meta_key TEXT,
+            meta_value TEXT,
+            PRIMARY KEY (table_name, code, meta_key)
+        )"""
+        )
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_kline_code ON kline_cache(code)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_index_code ON index_cache(code)")
