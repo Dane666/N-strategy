@@ -25,6 +25,7 @@ Do not store the webhook in code.
 
 - Local shell: set `FEISHU_WEBHOOK_URL`
 - GitHub Actions: add repository secret `FEISHU_WEBHOOK_URL`
+- Message mode: set `FEISHU_MESSAGE_MODE=card` when you want grouped card summaries
 
 ## GitHub Actions
 
@@ -35,3 +36,9 @@ Manual run:
 3. Click `Run workflow`
 
 Scheduled runs use the repository secret automatically.
+
+Default workflow behavior:
+
+- Full-market scan
+- Grouped Feishu card summary
+- Empty-result summary still gets pushed

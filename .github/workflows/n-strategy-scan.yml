@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      FEISHU_MESSAGE_MODE: card
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,4 +35,4 @@ jobs:
         run: python main.py --test-notify
 
       - name: Run scanner
-        run: python main.py --limit 100 --notify --allow-empty
+        run: python main.py --notify --allow-empty --top 20
