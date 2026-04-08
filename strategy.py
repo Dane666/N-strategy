@@ -28,6 +28,10 @@ class SignalResult:
     pullback_volume_ratio: float
     j_turn_up: bool
     oversold_triggered: bool
+    candle_pattern: str
+    oversold_level: str
+    signal_score: int
+    signal_group: str
     market_reason: str
     bottom_reason: str
     surge_reason: str
@@ -129,6 +133,57 @@ def _is_bottom_region(df: pd.DataFrame, idx: int) -> tuple[bool, str]:
     return False, "未处于长期下跌后的底部区域"
 
 
+def _build_signal_score(
+    oversold_row: pd.Series,
+    pattern_name: str,
+    pullback_days: int,
+    pullback_volume_ratio: float,
+    market_passed: bool,
+    bottom_region_passed: bool,
+    today_volume_ratio: float,
+) -> tuple[int, str, str]:
+    score = 0
+    oversold_level = "J<10且K<20"
+    if oversold_row["j"] < config.J_OVERSOLD_THRESHOLD:
+        score += 35
+        oversold_level = "J<0"
+    else:
+        score += 20
+
+    if pattern_name == "锤头线":
+        score += 15
+    else:
+        score += 10
+
+    if pullback_volume_ratio <= 0.33:
+        score += 20
+    elif pullback_volume_ratio <= 0.5:
+        score += 12
+
+    if pullback_days in (2, 3):
+        score += 10
+    else:
+        score += 6
+
+    if market_passed:
+        score += 10
+    if bottom_region_passed:
+        score += 5
+
+    if today_volume_ratio >= 1.5:
+        score += 10
+    elif today_volume_ratio >= 1.1:
+        score += 5
+
+    if score >= 80:
+        signal_group = "A档强信号"
+    elif score >= 65:
+        signal_group = "B档观察"
+    else:
+        signal_group = "C档埋伏"
+    return score, signal_group, oversold_level
+
+
 def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) -> Optional[SignalResult]:
     if stock_df is None or stock_df.empty or len(stock_df) < 40:
         return None
@@ -194,6 +249,7 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             continue
 
         pattern_row = df.iloc[pattern_idx]
+        pattern_name = "十字星" if _is_doji_like(pattern_row) else "锤头线"
 
         # 缩量十字星/锤头判定：形态日成交量小于第一笔大阳线一半，或小于5日均量
         pattern_volume_ok = (
@@ -215,6 +271,7 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             continue
 
         min_pullback_volume = pullback_df["volume"].min()
+        pullback_volume_ratio = float(min_pullback_volume / surge["volume"])
         oversold_row = df.iloc[oversold_idx]
         oversold_triggered = bool(
             oversold_row["j"] < config.J_OVERSOLD_THRESHOLD
@@ -222,6 +279,20 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
                 oversold_row["j"] < config.J_LOW_THRESHOLD
                 and oversold_row["k"] < config.K_LOW_THRESHOLD
             )
+        )
+        today_volume_ratio = (
+            float(today["volume"] / today["vol_ma5"])
+            if pd.notna(today["vol_ma5"]) and today["vol_ma5"] > 0
+            else 0.0
+        )
+        signal_score, signal_group, oversold_level = _build_signal_score(
+            oversold_row=oversold_row,
+            pattern_name=pattern_name,
+            pullback_days=pullback_days,
+            pullback_volume_ratio=pullback_volume_ratio,
+            market_passed=market_passed,
+            bottom_region_passed=bottom_region_passed,
+            today_volume_ratio=today_volume_ratio,
         )
 
         notes = []
@@ -233,6 +304,7 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             notes.append("超卖日或次日出现缩量十字星")
         elif _is_hammer_like(pattern_row):
             notes.append("超卖日或次日出现缩量锤头线")
+        notes.append(f"综合评分 {signal_score}，分组 {signal_group}")
 
         market_reason = (
             f"大盘过滤：上证指数信号日 {market_env['signal_date']}，"
@@ -247,8 +319,8 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
         )
         pullback_reason = (
             f"回调 {pullback_days} 天；J值超卖日 {str(oversold_row['date'].date())}，J={round(float(oversold_row['j']), 2)}，"
-            f"K={round(float(oversold_row['k']), 2)}；形态确认日 {str(pattern_row['date'].date())} 为十字星/锤头，"
-            f"最小成交量/启动量 = {round(float(min_pullback_volume / surge['volume']), 3)}"
+            f"K={round(float(oversold_row['k']), 2)}；形态确认日 {str(pattern_row['date'].date())} 为{pattern_name}，"
+            f"最小成交量/启动量 = {round(float(pullback_volume_ratio), 3)}"
         )
         trigger_reason = (
             f"今日收盘 {round(float(today['close']), 3)} 高于昨日收盘 {round(float(yesterday['close']), 3)}，"
@@ -266,11 +338,15 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             surge_date=str(surge["date"].date()),
             signal_price=round(float(today["close"]), 3),
             signal_gain_pct=round(float(today["daily_gain_pct"]), 2),
-            signal_volume_ratio_vs_5ma=round(float(today["volume"] / today["vol_ma5"]), 2) if pd.notna(today["vol_ma5"]) and today["vol_ma5"] > 0 else 0.0,
+            signal_volume_ratio_vs_5ma=round(today_volume_ratio, 2),
             pullback_days=pullback_days,
-            pullback_volume_ratio=round(float(min_pullback_volume / surge["volume"]), 3),
+            pullback_volume_ratio=round(pullback_volume_ratio, 3),
             j_turn_up=bool(today["j"] > yesterday["j"]),
             oversold_triggered=oversold_triggered,
+            candle_pattern=pattern_name,
+            oversold_level=oversold_level,
+            signal_score=signal_score,
+            signal_group=signal_group,
             market_reason=market_reason if market_passed else "大盘未站上MA20，依赖个股底部区域信号",
             bottom_reason=bottom_reason,
             surge_reason=surge_reason,

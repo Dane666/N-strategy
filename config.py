@@ -52,7 +52,9 @@ BOTTOM_REGION_BUFFER = 0.2
 
 # 输出
 RESULT_OUTPUT = "n_strategy_signals.csv"
+RESULT_TOP_N = 20
 
 # 通知
 FEISHU_ENABLED = True
 FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
+FEISHU_MESSAGE_MODE = os.getenv("FEISHU_MESSAGE_MODE", "card").lower()

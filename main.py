@@ -23,10 +23,11 @@ def parse_args():
     parser.add_argument("--notify", action="store_true", help="扫描完成后推送飞书")
     parser.add_argument("--test-notify", action="store_true", help="仅发送飞书测试消息")
     parser.add_argument("--allow-empty", action="store_true", help="即使无命中也打印结果并正常退出")
+    parser.add_argument("--top", type=int, default=config.RESULT_TOP_N, help="通知与展示的最多标的数")
     return parser.parse_args()
 
 
-def run_scan(limit: int, workers: int, output: str, notify: bool = False):
+def run_scan(limit: int, workers: int, output: str, notify: bool = False, top: int = config.RESULT_TOP_N):
     stock_list = data_fetcher.get_stock_list()
     if stock_list.empty:
         raise RuntimeError("未获取到股票列表，请检查网络或数据源。")
@@ -60,16 +61,17 @@ def run_scan(limit: int, workers: int, output: str, notify: bool = False):
     output_df = pd.DataFrame(results)
     if not output_df.empty:
         output_df = output_df.sort_values(
-            ["oversold_triggered", "signal_volume_ratio_vs_5ma", "signal_gain_pct"],
+            ["signal_score", "signal_volume_ratio_vs_5ma", "signal_gain_pct"],
             ascending=[False, False, False],
         ).reset_index(drop=True)
         output_df.to_csv(output, index=False, encoding="utf-8-sig")
-        if notify:
-            notifier.send_feishu_msg(
-                title=f"N字策略命中 {len(output_df)} 只",
-                content=notifier.build_signal_message(output_df.to_dict(orient="records")),
-                enabled=config.FEISHU_ENABLED,
-            )
+    if notify:
+        top_rows = output_df.head(top).to_dict(orient="records") if not output_df.empty else []
+        notifier.notify_scan_result(
+            signal_rows=top_rows,
+            market_env=market_env,
+            scanned_count=len(stock_list),
+        )
     return output_df
 
 
@@ -84,7 +86,7 @@ if __name__ == "__main__":
         print("飞书测试消息已发送。")
         raise SystemExit(0)
 
-    result_df = run_scan(limit=args.limit, workers=args.workers, output=args.output, notify=args.notify)
+    result_df = run_scan(limit=args.limit, workers=args.workers, output=args.output, notify=args.notify, top=args.top)
     if result_df.empty:
         print("未发现满足条件的标的。")
         if not args.allow_empty:
