@@ -68,21 +68,14 @@ def build_signal_message(signal_rows: list[dict]) -> str:
     lines = []
     for idx, row in enumerate(signal_rows, start=1):
         lines.append(f"{idx}. {row['code']} {row['name']}")
-        lines.append(f"类型: {'候选观察' if row['is_fallback'] else '正式命中'}")
-        lines.append(f"分组/评分: {row['signal_group']} / {row['signal_score']}")
-        lines.append(f"信号日期: {row['signal_date']}")
-        lines.append(f"超卖等级: {row['oversold_level']}，形态: {row['candle_pattern']}")
-        lines.append(f"超卖确认: {'是' if row['oversold_triggered'] else '否'}，J拐头向上: {'是' if row['j_turn_up'] else '否'}")
-        lines.append(f"触发涨幅: {row['signal_gain_pct']}%")
-        lines.append(f"回调天数: {row['pullback_days']}，回调最小量/启动量: {row['pullback_volume_ratio']}")
-        lines.append(f"大盘: {row['market_reason']}")
-        lines.append(f"底部区域: {row['bottom_reason']}")
-        lines.append(f"启动阳线: {row['surge_reason']}")
-        lines.append(f"缩量回调: {row['pullback_reason']}")
-        lines.append(f"买点触发: {row['trigger_reason']}")
+        lines.append(f"类型: {'候选观察' if row['is_fallback'] else '正式命中'} | 分组/评分: {row['signal_group']} / {row['signal_score']}")
+        lines.append(f"超卖/形态: {row['oversold_level']} / {row['candle_pattern']}")
+        lines.append(f"触发涨幅: {row['signal_gain_pct']}% | 量比5均: {row['signal_volume_ratio_vs_5ma']}")
+        lines.append(f"回调: {row['pullback_days']}天 | 回调量比: {row['pullback_volume_ratio']}")
+        lines.append(f"触发判断: {row['trigger_reason']}")
         if row.get("fallback_reason"):
             lines.append(f"候选原因: {row['fallback_reason']}")
-        lines.append(f"补充说明: {row['notes']}")
+        lines.append(f"说明: {row['notes']}")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -149,10 +142,10 @@ def build_grouped_card(signal_rows: list[dict], market_env: dict, scanned_count:
                     "text": {
                         "tag": "lark_md",
                         "content": (
-                            f"**{row['code']} {row['name']}**  分数 `{row['signal_score']}`\n"
-                            f"类型: {'候选观察' if row['is_fallback'] else '正式命中'}\n"
-                            f"超卖: {row['oversold_level']} | 形态: {row['candle_pattern']} | "
-                            f"触发涨幅: {row['signal_gain_pct']}% | 量比5均: {row['signal_volume_ratio_vs_5ma']}\n"
+                            f"**{row['code']} {row['name']}**  `{row['signal_group']}` `分数 {row['signal_score']}`\n"
+                            f"{'候选观察' if row['is_fallback'] else '正式命中'} | "
+                            f"{row['oversold_level']} | {row['candle_pattern']} | "
+                            f"涨幅 {row['signal_gain_pct']}% | 量比5均 {row['signal_volume_ratio_vs_5ma']}\n"
                             f"{row['trigger_reason']}"
                             + (f"\n候选原因: {row['fallback_reason']}" if row.get('fallback_reason') else "")
                         ),
@@ -160,6 +153,35 @@ def build_grouped_card(signal_rows: list[dict], market_env: dict, scanned_count:
                 }
             )
     return {"elements": elements}
+
+
+def send_test_notification():
+    if config.FEISHU_MESSAGE_MODE == "card":
+        send_feishu_card(
+            title="N字策略卡片测试",
+            card={
+                "elements": [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": (
+                                "**如果你看到这是一张真正的卡片，而不是 JSON 文本，说明 webhook 配置正确。**\n"
+                                "展示字段示例: 股票代码、分组评分、超卖等级、形态、触发说明。"
+                            ),
+                        },
+                    }
+                ]
+            },
+            enabled=config.FEISHU_ENABLED,
+        )
+        return
+
+    send_feishu_msg(
+        title="N-strategy 飞书测试",
+        content="飞书 webhook 已接入当前项目，后续将推送精简后的选股摘要。",
+        enabled=config.FEISHU_ENABLED,
+    )
 
 
 def notify_scan_result(signal_rows: list[dict], market_env: dict, scanned_count: int):

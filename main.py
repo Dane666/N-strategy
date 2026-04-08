@@ -78,11 +78,7 @@ def run_scan(limit: int, workers: int, output: str, notify: bool = False, top: i
 if __name__ == "__main__":
     args = parse_args()
     if args.test_notify:
-        notifier.send_feishu_msg(
-            title="N-strategy 飞书测试",
-            content="飞书 webhook 已接入当前项目，后续将推送选股命中理由。",
-            enabled=config.FEISHU_ENABLED,
-        )
+        notifier.send_test_notification()
         print("飞书测试消息已发送。")
         raise SystemExit(0)
 
