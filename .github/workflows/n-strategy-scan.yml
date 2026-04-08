@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-      FEISHU_MESSAGE_MODE: card
+      FEISHU_MESSAGE_MODE: text
     steps:
       - name: Checkout
         uses: actions/checkout@v4

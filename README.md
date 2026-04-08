@@ -1,44 +1,189 @@
 # N-strategy
 
-A-share scanner for the "N-breakout + KDJ J oversold reversal" setup.
+`N-strategy` 是一个面向 A 股的选股扫描项目，核心思路是：
 
-## Local run
+- 识别 `N 字第一笔放量启动`
+- 识别 `2 到 5 天缩量回调`
+- 结合 `KDJ 的 J 值超卖`
+- 使用 `十字星 / 锤头线` 做洗盘确认
+- 输出 `正式命中` 或 `候选观察`
+
+如果当日没有严格满足全部条件的股票，程序也会返回评分最高的候选股，避免全市场扫描后完全没有结果。
+
+## 一、策略逻辑
+
+### 1. 趋势背景
+
+- 大盘处于相对转强阶段：
+  - 上证指数站上 20 日均线，或
+  - 上证指数单日涨幅大于 1%
+- 如果大盘不够强，则允许个股本身处于长期下跌后的底部区域
+
+### 2. N 字第一笔
+
+- 最近 10 个交易日内出现一根大阳线
+- 涨幅大于 5%
+- 当日量比 5 日均量大于 1.5
+
+### 3. 缩量回调
+
+- 大阳线后连续回调 2 到 5 天
+- 回调期间满足以下任一超卖条件：
+  - `J < 0`
+  - `J < 10 且 K < 20`
+- 超卖当天或次日出现十字星 / 锤头线
+- 回调量能明显萎缩
+
+### 4. 买点触发
+
+- 今日收盘价大于昨日收盘价
+- 今日 J 值大于昨日 J 值
+- 今日成交量大于昨日成交量
+
+### 5. 候选股兜底
+
+- 如果不满足严格买点，但结构完整度较高，程序会保留为 `候选观察`
+- 候选结果会明确说明缺少哪一步触发条件
+
+## 二、项目结构
+
+- [main.py](/Users/admin/Documents/codeHub/N-strategy/main.py)
+  扫描入口
+- [strategy.py](/Users/admin/Documents/codeHub/N-strategy/strategy.py)
+  策略识别与评分逻辑
+- [data_fetcher.py](/Users/admin/Documents/codeHub/N-strategy/data_fetcher.py)
+  数据获取与缓存
+- [notifier.py](/Users/admin/Documents/codeHub/N-strategy/notifier.py)
+  飞书通知
+- [config.py](/Users/admin/Documents/codeHub/N-strategy/config.py)
+  全局参数配置
+
+## 三、环境准备
+
+### 1. 创建环境
 
 ```bash
 conda env create -f environment.yml
-conda run -n n-strategy python main.py --limit 50
-conda run -n n-strategy python main.py --limit 50 --notify
 ```
 
-## Signal summary
+### 2. 使用环境运行
 
-- Market regime: index above MA20, or the stock remains in a long-decline bottom region
-- First leg: a >5% surge candle within 10 trading days with volume ratio > 1.5
-- Pullback: 2-5 day retracement with clear volume contraction
-- KDJ washout: `J < 0`, or `J < 10 and K < 20`
-- Candle confirmation: a doji or hammer appears on the oversold day or the next day
-- Trigger: today closes above yesterday, J turns up, and volume is above yesterday
+```bash
+conda run -n n-strategy python main.py --limit 50 --allow-empty
+```
 
-## Feishu secret
+## 四、本地使用方法
 
-Do not store the webhook in code.
+### 1. 小范围测试
 
-- Local shell: set `FEISHU_WEBHOOK_URL`
-- GitHub Actions: add repository secret `FEISHU_WEBHOOK_URL`
-- Message mode: set `FEISHU_MESSAGE_MODE=card` when you want grouped card summaries
+```bash
+conda run -n n-strategy python main.py --limit 50 --allow-empty
+```
 
-## GitHub Actions
+说明：
 
-Manual run:
+- `--limit 50` 表示只扫描前 50 只股票
+- `--allow-empty` 表示即使没有结果也正常退出
 
-1. Open `Actions`
-2. Select `n-strategy-scan`
-3. Click `Run workflow`
+### 2. 全市场扫描
 
-Scheduled runs use the repository secret automatically.
+```bash
+conda run -n n-strategy python main.py --allow-empty --top 20
+```
 
-Default workflow behavior:
+说明：
 
-- Full-market scan
-- Grouped Feishu card summary
-- Empty-result summary still gets pushed
+- 不传 `--limit` 时默认扫描全市场
+- `--top 20` 表示输出和通知最多展示前 20 条
+
+### 3. 发送飞书通知
+
+当前推荐使用 **纯文本通知**，因为你目前的 webhook 链路会把 JSON 结构直接显示成文本，不适合卡片模式。
+
+本地运行：
+
+```bash
+FEISHU_WEBHOOK_URL="你的 webhook" \
+FEISHU_MESSAGE_MODE=text \
+conda run -n n-strategy python main.py --notify --allow-empty --top 20
+```
+
+### 4. 测试飞书通知
+
+```bash
+FEISHU_WEBHOOK_URL="你的 webhook" \
+FEISHU_MESSAGE_MODE=text \
+conda run -n n-strategy python main.py --test-notify
+```
+
+如果看到的是整洁正文，而不是 JSON 字符串，说明当前文本通知链路配置正确。
+
+### 5. 飞书 Flow 推荐填写方式
+
+如果你当前使用的是 `flow/api/trigger-webhook/...` 这种 Flow Webhook，请不要再使用“完整 JSON 字符串”作为消息内容。
+
+本项目发送给 Flow 的数据结构只有两个字段：
+
+- `title`
+- `content`
+
+在飞书流程中建议这样配置：
+
+1. `Webhook 触发` 节点接收请求
+2. 发送消息节点中：
+   - 消息标题：选择 `Webhook 触发.title`
+   - 消息内容：选择 `Webhook 触发.content`
+
+这样最终看到的是正常文本摘要，而不是整段 JSON。
+
+## 五、GitHub Actions 使用方式
+
+工作流文件：
+
+- [n-strategy-scan.yml](/Users/admin/Documents/codeHub/N-strategy/.github/workflows/n-strategy-scan.yml)
+
+### 1. 配置 GitHub Secret
+
+打开仓库：
+
+`Settings -> Secrets and variables -> Actions`
+
+新增以下 Secret：
+
+- `FEISHU_WEBHOOK_URL`
+
+值填写你当前可用的飞书 webhook。
+
+### 2. 手动运行工作流
+
+打开：
+
+`Actions -> n-strategy-scan -> Run workflow`
+
+### 3. 工作流默认行为
+
+工作流会自动执行：
+
+1. 安装依赖
+2. 做语法检查
+3. 发送一条纯文本测试消息
+4. 进行全市场扫描
+5. 发送纯文本扫描摘要
+
+## 六、通知内容说明
+
+通知会尽量保持简洁，只保留核心信息：
+
+- 股票代码与名称
+- 正式命中 / 候选观察
+- 分组与评分
+- 超卖等级与形态
+- 涨幅与量比
+- 回调信息
+- 触发说明
+- 候选原因（如果有）
+
+## 七、补充说明
+
+- 如果你当前使用的是飞书 Flow Webhook，建议保持 `FEISHU_MESSAGE_MODE=text`
+- 如果未来切换到真正支持机器人卡片的 webhook，再考虑恢复卡片通知

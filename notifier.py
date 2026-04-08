@@ -16,6 +16,10 @@ import config
 logger = logging.getLogger("n_strategy")
 
 
+def _is_flow_webhook(url: str) -> bool:
+    return "/flow/api/trigger-webhook/" in url
+
+
 def send_feishu_msg(title: str, content: str, webhook_url: str | None = None, enabled: bool = True):
     if not enabled:
         return
@@ -24,16 +28,31 @@ def send_feishu_msg(title: str, content: str, webhook_url: str | None = None, en
         logger.warning("飞书通知已开启，但未配置 Webhook URL")
         return
 
-    data = {
-        "msg_type": "text",
-        "content": {"text": f"{title}\n\n{content}"},
-    }
-    response = requests.post(
-        url,
-        headers={"Content-Type": "application/json"},
-        data=json.dumps(data),
-        timeout=5,
-    )
+    payload_text = f"{title}\n\n{content}".strip()
+    if _is_flow_webhook(url):
+        response = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(
+                {
+                    "title": title,
+                    "content": content,
+                },
+                ensure_ascii=False,
+            ),
+            timeout=5,
+        )
+    else:
+        data = {
+            "msg_type": "text",
+            "content": {"text": payload_text},
+        }
+        response = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(data),
+            timeout=5,
+        )
     response.raise_for_status()
 
 
@@ -65,28 +84,30 @@ def send_feishu_card(title: str, card: dict, webhook_url: str | None = None, ena
 
 
 def build_signal_message(signal_rows: list[dict]) -> str:
-    lines = []
+    lines = ["结果摘要"]
     for idx, row in enumerate(signal_rows, start=1):
+        lines.append("")
         lines.append(f"{idx}. {row['code']} {row['name']}")
-        lines.append(f"类型: {'候选观察' if row['is_fallback'] else '正式命中'} | 分组/评分: {row['signal_group']} / {row['signal_score']}")
-        lines.append(f"超卖/形态: {row['oversold_level']} / {row['candle_pattern']}")
-        lines.append(f"触发涨幅: {row['signal_gain_pct']}% | 量比5均: {row['signal_volume_ratio_vs_5ma']}")
+        lines.append(f"类别: {'正式命中' if not row['is_fallback'] else '候选观察'}")
+        lines.append(f"评级: {row['signal_group']} | 评分: {row['signal_score']}")
+        lines.append(f"形态: {row['oversold_level']} | {row['candle_pattern']}")
+        lines.append(f"涨幅/量比: {row['signal_gain_pct']}% / {row['signal_volume_ratio_vs_5ma']}")
         lines.append(f"回调: {row['pullback_days']}天 | 回调量比: {row['pullback_volume_ratio']}")
-        lines.append(f"触发判断: {row['trigger_reason']}")
+        lines.append(f"触发: {row['trigger_reason']}")
         if row.get("fallback_reason"):
             lines.append(f"候选原因: {row['fallback_reason']}")
         lines.append(f"说明: {row['notes']}")
-        lines.append("")
     return "\n".join(lines).strip()
 
 
 def build_empty_message(market_env: dict, scanned_count: int) -> str:
     return (
-        f"本轮扫描未命中标的。\n"
+        "结果摘要\n\n"
+        "本轮没有正式命中或候选结果。\n"
         f"扫描数量: {scanned_count}\n"
         f"大盘日期: {market_env['signal_date']}\n"
-        f"大盘MA20之上: {market_env['above_ma20']}\n"
-        f"大盘单日涨幅>1%: {market_env['gain_gt_1pct']}"
+        f"大盘 MA20 之上: {market_env['above_ma20']}\n"
+        f"大盘单日涨幅 >1%: {market_env['gain_gt_1pct']}"
     )
 
 
@@ -156,44 +177,18 @@ def build_grouped_card(signal_rows: list[dict], market_env: dict, scanned_count:
 
 
 def send_test_notification():
-    if config.FEISHU_MESSAGE_MODE == "card":
-        send_feishu_card(
-            title="N字策略卡片测试",
-            card={
-                "elements": [
-                    {
-                        "tag": "div",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": (
-                                "**如果你看到这是一张真正的卡片，而不是 JSON 文本，说明 webhook 配置正确。**\n"
-                                "展示字段示例: 股票代码、分组评分、超卖等级、形态、触发说明。"
-                            ),
-                        },
-                    }
-                ]
-            },
-            enabled=config.FEISHU_ENABLED,
-        )
-        return
-
     send_feishu_msg(
-        title="N-strategy 飞书测试",
-        content="飞书 webhook 已接入当前项目，后续将推送精简后的选股摘要。",
+        title="N字策略测试",
+        content=(
+            "这是纯文本测试消息。\n"
+            "如果你看到的是整洁正文，而不是 JSON 字符串，说明当前 webhook 链路适合文本通知。"
+        ),
         enabled=config.FEISHU_ENABLED,
     )
 
 
 def notify_scan_result(signal_rows: list[dict], market_env: dict, scanned_count: int):
     title = f"N字策略扫描 {market_env['signal_date']}"
-    if config.FEISHU_MESSAGE_MODE == "card":
-        send_feishu_card(
-            title=title,
-            card=build_grouped_card(signal_rows, market_env, scanned_count),
-            enabled=config.FEISHU_ENABLED,
-        )
-        return
-
     if signal_rows:
         content = build_signal_message(signal_rows)
     else:
