@@ -85,21 +85,37 @@ def send_feishu_card(title: str, card: dict, webhook_url: str | None = None, ena
 
 def build_signal_message(signal_rows: list[dict]) -> str:
     lines = ["结果摘要"]
-    formal_count = sum(1 for row in signal_rows if not row["is_fallback"])
-    fallback_count = sum(1 for row in signal_rows if row["is_fallback"])
-    lines.append(f"正式命中: {formal_count} 只 | 候选观察: {fallback_count} 只")
-    for idx, row in enumerate(signal_rows, start=1):
+    formal_rows = [row for row in signal_rows if not row["is_fallback"]]
+    fallback_rows = [row for row in signal_rows if row["is_fallback"]]
+
+    lines.append(f"正式命中: {len(formal_rows)} 只")
+    lines.append(f"候选观察: {len(fallback_rows)} 只")
+
+    if formal_rows:
         lines.append("")
-        lines.append(f"{idx}. {row['code']} {row['name']}")
-        lines.append(f"类别: {'正式命中' if not row['is_fallback'] else '候选观察'}")
-        lines.append(f"评级: {row['signal_group']} | 评分: {row['signal_score']}")
-        lines.append(f"形态: {row['oversold_level']} | {row['candle_pattern']}")
-        lines.append(f"涨幅/量比: {row['signal_gain_pct']}% / {row['signal_volume_ratio_vs_5ma']}")
-        lines.append(f"回调: {row['pullback_days']}天 | 回调量比: {row['pullback_volume_ratio']}")
-        lines.append(f"触发: {row['trigger_reason']}")
-        if row.get("fallback_reason"):
-            lines.append(f"候选原因: {row['fallback_reason']}")
-        lines.append(f"说明: {row['notes']}")
+        lines.append("【正式命中】")
+        for idx, row in enumerate(formal_rows, start=1):
+            lines.append(f"{idx}. {row['code']} {row['name']}")
+            lines.append(f"评级: {row['signal_group']} | 评分: {row['signal_score']}")
+            lines.append(f"形态: {row['oversold_level']} | {row['candle_pattern']}")
+            lines.append(f"涨幅/量比: {row['signal_gain_pct']}% / {row['signal_volume_ratio_vs_5ma']}")
+            lines.append(f"回调: {row['pullback_days']}天 | 回调量比: {row['pullback_volume_ratio']}")
+            lines.append(f"触发: {row['trigger_reason']}")
+            lines.append(f"说明: {row['notes']}")
+            lines.append("")
+
+    if fallback_rows:
+        lines.append("【候选观察前三】")
+        for idx, row in enumerate(fallback_rows[:3], start=1):
+            lines.append(f"{idx}. {row['code']} {row['name']}")
+            lines.append(f"评级: {row['signal_group']} | 评分: {row['signal_score']}")
+            lines.append(f"形态: {row['oversold_level']} | {row['candle_pattern']}")
+            lines.append(f"涨幅/量比: {row['signal_gain_pct']}% / {row['signal_volume_ratio_vs_5ma']}")
+            lines.append(f"触发: {row['trigger_reason']}")
+            if row.get("fallback_reason"):
+                lines.append(f"候选原因: {row['fallback_reason']}")
+            lines.append(f"说明: {row['notes']}")
+            lines.append("")
     return "\n".join(lines).strip()
 
 
