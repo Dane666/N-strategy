@@ -66,7 +66,13 @@ def run_scan(limit: int, workers: int, output: str, notify: bool = False, top: i
         ).reset_index(drop=True)
         output_df.to_csv(output, index=False, encoding="utf-8-sig")
     if notify:
-        top_rows = output_df.head(top).to_dict(orient="records") if not output_df.empty else []
+        top_rows = []
+        if not output_df.empty:
+            formal_df = output_df[output_df["is_fallback"] == False].copy()
+            if not formal_df.empty:
+                top_rows = formal_df.head(top).to_dict(orient="records")
+            else:
+                top_rows = output_df.head(3).to_dict(orient="records")
         notifier.notify_scan_result(
             signal_rows=top_rows,
             market_env=market_env,

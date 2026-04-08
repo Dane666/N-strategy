@@ -85,6 +85,9 @@ def send_feishu_card(title: str, card: dict, webhook_url: str | None = None, ena
 
 def build_signal_message(signal_rows: list[dict]) -> str:
     lines = ["结果摘要"]
+    formal_count = sum(1 for row in signal_rows if not row["is_fallback"])
+    fallback_count = sum(1 for row in signal_rows if row["is_fallback"])
+    lines.append(f"正式命中: {formal_count} 只 | 候选观察: {fallback_count} 只")
     for idx, row in enumerate(signal_rows, start=1):
         lines.append("")
         lines.append(f"{idx}. {row['code']} {row['name']}")
@@ -188,7 +191,7 @@ def send_test_notification():
 
 
 def notify_scan_result(signal_rows: list[dict], market_env: dict, scanned_count: int):
-    title = f"N字策略扫描 {market_env['signal_date']}"
+    title = f"N字策略盘后扫描 {market_env['signal_date']}"
     if signal_rows:
         content = build_signal_message(signal_rows)
     else:
