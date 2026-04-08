@@ -68,6 +68,7 @@ def build_signal_message(signal_rows: list[dict]) -> str:
     lines = []
     for idx, row in enumerate(signal_rows, start=1):
         lines.append(f"{idx}. {row['code']} {row['name']}")
+        lines.append(f"类型: {'候选观察' if row['is_fallback'] else '正式命中'}")
         lines.append(f"分组/评分: {row['signal_group']} / {row['signal_score']}")
         lines.append(f"信号日期: {row['signal_date']}")
         lines.append(f"超卖等级: {row['oversold_level']}，形态: {row['candle_pattern']}")
@@ -79,6 +80,8 @@ def build_signal_message(signal_rows: list[dict]) -> str:
         lines.append(f"启动阳线: {row['surge_reason']}")
         lines.append(f"缩量回调: {row['pullback_reason']}")
         lines.append(f"买点触发: {row['trigger_reason']}")
+        if row.get("fallback_reason"):
+            lines.append(f"候选原因: {row['fallback_reason']}")
         lines.append(f"补充说明: {row['notes']}")
         lines.append("")
     return "\n".join(lines).strip()
@@ -147,9 +150,11 @@ def build_grouped_card(signal_rows: list[dict], market_env: dict, scanned_count:
                         "tag": "lark_md",
                         "content": (
                             f"**{row['code']} {row['name']}**  分数 `{row['signal_score']}`\n"
+                            f"类型: {'候选观察' if row['is_fallback'] else '正式命中'}\n"
                             f"超卖: {row['oversold_level']} | 形态: {row['candle_pattern']} | "
                             f"触发涨幅: {row['signal_gain_pct']}% | 量比5均: {row['signal_volume_ratio_vs_5ma']}\n"
                             f"{row['trigger_reason']}"
+                            + (f"\n候选原因: {row['fallback_reason']}" if row.get('fallback_reason') else "")
                         ),
                     },
                 }

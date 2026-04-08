@@ -32,6 +32,8 @@ class SignalResult:
     oversold_level: str
     signal_score: int
     signal_group: str
+    is_fallback: bool
+    fallback_reason: str
     market_reason: str
     bottom_reason: str
     surge_reason: str
@@ -203,6 +205,8 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
     if surge_end < surge_start:
         return None
 
+    best_candidate: Optional[SignalResult] = None
+
     for surge_idx in range(surge_end, surge_start - 1, -1):
         surge = df.iloc[surge_idx]
         if surge["daily_gain_pct"] <= config.SURGE_GAIN_PCT:
@@ -263,12 +267,9 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
                 or (pullback_df["volume"] < pullback_df["vol_ma5"]).any()):
             continue
 
-        if today["close"] <= yesterday["close"]:
-            continue
-        if today["j"] <= yesterday["j"]:
-            continue
-        if today["volume"] <= yesterday["volume"]:
-            continue
+        trigger_price_up = bool(today["close"] > yesterday["close"])
+        trigger_j_up = bool(today["j"] > yesterday["j"])
+        trigger_volume_up = bool(today["volume"] > yesterday["volume"])
 
         min_pullback_volume = pullback_df["volume"].min()
         pullback_volume_ratio = float(min_pullback_volume / surge["volume"])
@@ -294,6 +295,25 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             bottom_region_passed=bottom_region_passed,
             today_volume_ratio=today_volume_ratio,
         )
+
+        missing_triggers = []
+        if not trigger_price_up:
+            missing_triggers.append("今日未收阳")
+            signal_score -= 12
+        if not trigger_j_up:
+            missing_triggers.append("J值未拐头向上")
+            signal_score -= 15
+        if not trigger_volume_up:
+            missing_triggers.append("今日量能未高于昨日")
+            signal_score -= 10
+        signal_score = max(signal_score, 1)
+
+        if signal_score >= 80:
+            signal_group = "A档强信号"
+        elif signal_score >= 65:
+            signal_group = "B档观察"
+        else:
+            signal_group = "C档埋伏"
 
         notes = []
         if oversold_row["j"] < config.J_OVERSOLD_THRESHOLD:
@@ -328,7 +348,7 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             f"成交量 {int(today['volume'])} > 昨日 {int(yesterday['volume'])}"
         )
 
-        return SignalResult(
+        result = SignalResult(
             code=code,
             name=name,
             signal_date=str(today["date"].date()),
@@ -347,6 +367,8 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             oversold_level=oversold_level,
             signal_score=signal_score,
             signal_group=signal_group,
+            is_fallback=False,
+            fallback_reason="",
             market_reason=market_reason if market_passed else "大盘未站上MA20，依赖个股底部区域信号",
             bottom_reason=bottom_reason,
             surge_reason=surge_reason,
@@ -355,4 +377,21 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
             notes="；".join(notes) if notes else "满足基础KDJ超卖N字反转条件",
         )
 
-    return None
+        if trigger_price_up and trigger_j_up and trigger_volume_up:
+            return result
+
+        candidate = SignalResult(
+            **{
+                **result.__dict__,
+                "is_fallback": True,
+                "fallback_reason": "；".join(missing_triggers) if missing_triggers else "触发条件略弱",
+                "trigger_reason": (
+                    f"候选观察：收阳={trigger_price_up}，J拐头={trigger_j_up}，量能放大={trigger_volume_up}"
+                ),
+                "notes": result.notes + "；当前作为候选观察返回",
+            }
+        )
+        if best_candidate is None or candidate.signal_score > best_candidate.signal_score:
+            best_candidate = candidate
+
+    return best_candidate

@@ -23,6 +23,9 @@ import config
 import db as cache_db
 
 cache_db.init_db()
+ALT_DB_PATHS = [
+    os.path.join("/Users/admin/Documents/codeHub/ma_scanner", "ma_scanner.db"),
+]
 
 
 def _get_exchange_prefix(code: str) -> str:
@@ -86,9 +89,20 @@ def _fetch_kline_tencent(code: str, count: int = 500, is_index: bool = False) ->
         return None
 
 
-def _load_kline_from_db(table: str, code: str, min_date: Optional[str] = None) -> Optional[pd.DataFrame]:
+def _normalize_loaded_kline(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    if df.empty:
+        return None
+    df = df.rename(columns={"trade_date": "date"})
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.drop(columns=["code"], errors="ignore")
+    return df
+
+
+def _load_kline_from_sqlite(db_path: str, table: str, code: str, min_date: Optional[str] = None) -> Optional[pd.DataFrame]:
     try:
-        with cache_db.get_connection(readonly=True) as conn:
+        import sqlite3
+
+        with sqlite3.connect(db_path) as conn:
             if min_date:
                 query = (
                     f"SELECT * FROM {table} WHERE code=? AND trade_date>=? "
@@ -98,14 +112,22 @@ def _load_kline_from_db(table: str, code: str, min_date: Optional[str] = None) -
             else:
                 query = f"SELECT * FROM {table} WHERE code=? ORDER BY trade_date"
                 df = pd.read_sql_query(query, conn, params=(code,))
-        if df.empty:
-            return None
-        df = df.rename(columns={"trade_date": "date"})
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.drop(columns=["code"], errors="ignore")
-        return df
+        return _normalize_loaded_kline(df)
     except Exception:
         return None
+
+
+def _load_kline_from_db(table: str, code: str, min_date: Optional[str] = None) -> Optional[pd.DataFrame]:
+    primary = _load_kline_from_sqlite(config.DB_PATH, table, code, min_date)
+    if primary is not None and not primary.empty:
+        return primary
+    for db_path in ALT_DB_PATHS:
+        if not os.path.exists(db_path):
+            continue
+        cached = _load_kline_from_sqlite(db_path, table, code, min_date)
+        if cached is not None and not cached.empty:
+            return cached
+    return None
 
 
 def _save_kline_to_db(table: str, code: str, df: pd.DataFrame):
@@ -280,6 +302,8 @@ def fetch_stock_ohlcv(code: str, days: Optional[int] = None) -> Optional[pd.Data
         days = config.HISTORY_DAYS
     min_date = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     cached = _load_kline_from_db("kline_cache", code, min_date)
+    if cached is not None and len(cached) >= 60:
+        return cached
     if cached is not None and not _needs_refresh(cached):
         return cached
 
@@ -300,6 +324,8 @@ def fetch_index_daily(symbol: Optional[str] = None, days: Optional[int] = None) 
         days = config.HISTORY_DAYS
     min_date = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     cached = _load_kline_from_db("index_cache", symbol, min_date)
+    if cached is not None and len(cached) >= 60:
+        return cached
     if cached is not None and not _needs_refresh(cached):
         return cached
 
