@@ -1,6 +1,9 @@
 name: n-strategy-scan
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
   schedule:
     - cron: "20 7 * * 1-5"
