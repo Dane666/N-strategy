@@ -16,7 +16,7 @@ import strategy
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="底部十字星 + 缩量回调 N 字策略扫描器")
+    parser = argparse.ArgumentParser(description="N字战法 + KDJ J值超卖反转策略扫描器")
     parser.add_argument("--limit", type=int, default=0, help="仅扫描前 N 只股票")
     parser.add_argument("--workers", type=int, default=config.MAX_WORKERS, help="并发线程数")
     parser.add_argument("--output", type=str, default=config.RESULT_OUTPUT, help="结果输出文件")
@@ -60,7 +60,7 @@ def run_scan(limit: int, workers: int, output: str, notify: bool = False):
     output_df = pd.DataFrame(results)
     if not output_df.empty:
         output_df = output_df.sort_values(
-            ["strong_volume_breakout", "breakout_volume_ratio_vs_5ma", "breakout_gain_pct"],
+            ["oversold_triggered", "signal_volume_ratio_vs_5ma", "signal_gain_pct"],
             ascending=[False, False, False],
         ).reset_index(drop=True)
         output_df.to_csv(output, index=False, encoding="utf-8-sig")

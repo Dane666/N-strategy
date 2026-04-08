@@ -1,5 +1,5 @@
 """
-底部十字星 + 缩量回调 N 字突破策略。
+N字战法 + KDJ J值超卖策略。
 """
 
 from __future__ import annotations
@@ -18,19 +18,21 @@ class SignalResult:
     name: str
     signal_date: str
     market_passed: bool
-    doji_date: str
+    bottom_region_passed: bool
+    pattern_date: str
     surge_date: str
-    breakout_price: float
-    breakout_gain_pct: float
-    breakout_volume_ratio_vs_5ma: float
+    signal_price: float
+    signal_gain_pct: float
+    signal_volume_ratio_vs_5ma: float
     pullback_days: int
     pullback_volume_ratio: float
-    strong_volume_breakout: bool
+    j_turn_up: bool
+    oversold_triggered: bool
     market_reason: str
-    doji_reason: str
+    bottom_reason: str
     surge_reason: str
     pullback_reason: str
-    breakout_reason: str
+    trigger_reason: str
     notes: str
 
 
@@ -40,6 +42,20 @@ def enrich_indicators(df: pd.DataFrame) -> pd.DataFrame:
     result["close_ma20"] = result["close"].rolling(config.MARKET_MA_PERIOD).mean()
     result["prev_close"] = result["close"].shift(1)
     result["daily_gain_pct"] = (result["close"] / result["prev_close"] - 1) * 100
+    result["low_n"] = result["low"].rolling(config.KDJ_LOOKBACK).min()
+    result["high_n"] = result["high"].rolling(config.KDJ_LOOKBACK).max()
+    rsv_base = (result["high_n"] - result["low_n"]).replace(0, pd.NA)
+    result["rsv"] = ((result["close"] - result["low_n"]) / rsv_base * 100).fillna(50.0)
+    result["k"] = result["rsv"].ewm(
+        alpha=1 / config.KDJ_SMOOTH_K,
+        adjust=False,
+    ).mean()
+    result["d"] = result["k"].ewm(
+        alpha=1 / config.KDJ_SMOOTH_D,
+        adjust=False,
+    ).mean()
+    result["j"] = 3 * result["k"] - 2 * result["d"]
+    result["low_60"] = result["low"].rolling(config.BOTTOM_REGION_LOOKBACK).min()
     return result
 
 
@@ -72,6 +88,24 @@ def _is_doji_like(row: pd.Series) -> bool:
     )
 
 
+def _is_hammer_like(row: pd.Series) -> bool:
+    amplitude = row["high"] - row["low"]
+    if amplitude <= 0:
+        return False
+    body = abs(row["close"] - row["open"])
+    upper_shadow = row["high"] - max(row["open"], row["close"])
+    lower_shadow = min(row["open"], row["close"]) - row["low"]
+    return (
+        body <= amplitude * config.DOJI_BODY_TO_RANGE_MAX
+        and lower_shadow >= amplitude * config.HAMMER_LOWER_SHADOW_MIN
+        and upper_shadow <= amplitude * 0.25
+    )
+
+
+def _is_bottom_reversal_candle(row: pd.Series) -> bool:
+    return _is_doji_like(row) or _is_hammer_like(row)
+
+
 def _calc_drop_pct(window: pd.DataFrame) -> Optional[float]:
     if window.empty:
         return None
@@ -82,38 +116,46 @@ def _calc_drop_pct(window: pd.DataFrame) -> Optional[float]:
     return (end_price / start_price - 1) * 100
 
 
+def _is_bottom_region(df: pd.DataFrame, idx: int) -> tuple[bool, str]:
+    window_start = max(0, idx - config.PREV_DROP_LOOKBACK + 1)
+    recent_drop = _calc_drop_pct(df.iloc[window_start : idx + 1])
+    row = df.iloc[idx]
+    if pd.notna(row.get("low_60")) and row["low_60"] > 0:
+        distance_to_low = (row["close"] - row["low_60"]) / row["low_60"]
+        if distance_to_low <= config.BOTTOM_REGION_BUFFER:
+            return True, f"股价位于{config.BOTTOM_REGION_LOOKBACK}日低点上方 {round(distance_to_low * 100, 2)}%"
+    if recent_drop is not None and recent_drop <= config.PREV_DROP_THRESHOLD:
+        return True, f"近{config.PREV_DROP_LOOKBACK}日跌幅 {round(recent_drop, 2)}%"
+    return False, "未处于长期下跌后的底部区域"
+
+
 def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) -> Optional[SignalResult]:
     if stock_df is None or stock_df.empty or len(stock_df) < 40:
-        return None
-    if not market_env.get("passed", False):
         return None
 
     df = enrich_indicators(stock_df)
     today_idx = len(df) - 1
-    doji_start = max(0, today_idx - config.DOJI_LOOKBACK_MAX)
-    doji_end = today_idx - config.DOJI_LOOKBACK_MIN
-    if doji_end <= doji_start:
+    today = df.iloc[today_idx]
+    yesterday = df.iloc[today_idx - 1]
+    market_passed = bool(market_env.get("passed", False))
+    bottom_region_passed, bottom_region_text = _is_bottom_region(df, today_idx)
+
+    if not market_passed and not bottom_region_passed:
         return None
 
-    for doji_idx in range(doji_end, doji_start - 1, -1):
-        doji = df.iloc[doji_idx]
-        if not _is_doji_like(doji):
-            continue
-        pre_window_start = max(0, doji_idx - config.PREV_DROP_LOOKBACK + 1)
-        pre_window = df.iloc[pre_window_start : doji_idx + 1]
-        drop_pct = _calc_drop_pct(pre_window)
-        if drop_pct is None or drop_pct > config.PREV_DROP_THRESHOLD:
-            continue
-        if pd.isna(doji["vol_ma5"]) or doji["volume"] >= doji["vol_ma5"]:
-            continue
+    surge_start = max(1, today_idx - config.SURGE_LOOKBACK_DAYS)
+    surge_end = today_idx - config.PULLBACK_DAYS_MIN - 1
+    if surge_end < surge_start:
+        return None
 
-        surge_idx = doji_idx + 1
-        if surge_idx >= today_idx:
-            continue
+    for surge_idx in range(surge_end, surge_start - 1, -1):
         surge = df.iloc[surge_idx]
         if surge["daily_gain_pct"] <= config.SURGE_GAIN_PCT:
             continue
-        if pd.isna(surge["vol_ma5"]) or surge["volume"] / surge["vol_ma5"] <= config.SURGE_VOLUME_RATIO:
+        if pd.isna(surge["vol_ma5"]) or surge["vol_ma5"] <= 0:
+            continue
+        surge_volume_ratio = surge["volume"] / surge["vol_ma5"]
+        if surge_volume_ratio <= config.SURGE_VOLUME_RATIO:
             continue
 
         pullback_start = surge_idx + 1
@@ -121,75 +163,120 @@ def find_signal(code: str, name: str, stock_df: pd.DataFrame, market_env: dict) 
         pullback_days = pullback_end - pullback_start + 1
         if pullback_days < config.PULLBACK_DAYS_MIN or pullback_days > config.PULLBACK_DAYS_MAX:
             continue
-
         pullback_df = df.iloc[pullback_start : pullback_end + 1].copy()
         if pullback_df.empty:
             continue
-        if pullback_df["low"].min() < doji["low"]:
+
+        # J值超卖判定：J < 0，或者 J < 10 且 K < 20
+        oversold_mask = (
+            (pullback_df["j"] < config.J_OVERSOLD_THRESHOLD)
+            | (
+                (pullback_df["j"] < config.J_LOW_THRESHOLD)
+                & (pullback_df["k"] < config.K_LOW_THRESHOLD)
+            )
+        )
+        if not oversold_mask.any():
+            continue
+
+        oversold_indices = pullback_df.index[oversold_mask].tolist()
+        pattern_idx = None
+        oversold_idx = None
+        for candidate_idx in oversold_indices:
+            if _is_bottom_reversal_candle(df.iloc[candidate_idx]):
+                pattern_idx = candidate_idx
+                oversold_idx = candidate_idx
+                break
+            if candidate_idx + 1 <= pullback_end and _is_bottom_reversal_candle(df.iloc[candidate_idx + 1]):
+                pattern_idx = candidate_idx + 1
+                oversold_idx = candidate_idx
+                break
+        if pattern_idx is None:
+            continue
+
+        pattern_row = df.iloc[pattern_idx]
+
+        # 缩量十字星/锤头判定：形态日成交量小于第一笔大阳线一半，或小于5日均量
+        pattern_volume_ok = (
+            pattern_row["volume"] < surge["volume"] * config.PULLBACK_VOLUME_SHRINK
+            or (pd.notna(pattern_row["vol_ma5"]) and pattern_row["volume"] < pattern_row["vol_ma5"])
+        )
+        if not pattern_volume_ok:
+            continue
+
+        if not (pullback_df["volume"].min() < surge["volume"] * config.PULLBACK_VOLUME_SHRINK
+                or (pullback_df["volume"] < pullback_df["vol_ma5"]).any()):
+            continue
+
+        if today["close"] <= yesterday["close"]:
+            continue
+        if today["j"] <= yesterday["j"]:
+            continue
+        if today["volume"] <= yesterday["volume"]:
             continue
 
         min_pullback_volume = pullback_df["volume"].min()
-        if min_pullback_volume >= surge["volume"] * config.PULLBACK_VOLUME_SHRINK:
-            continue
-
-        if not (df.iloc[today_idx]["close"] > surge["high"]):
-            continue
-        today = df.iloc[today_idx]
-        yesterday = df.iloc[today_idx - 1]
-        if today["volume"] <= yesterday["volume"]:
-            continue
-        if pd.isna(today["vol_ma5"]) or today["volume"] <= today["vol_ma5"]:
-            continue
-
-        pullback_avg_volume = pullback_df["volume"].mean()
-        strong_volume_breakout = bool(today["volume"] >= pullback_avg_volume * config.BREAKOUT_PULLBACK_VOLUME_MULTIPLIER)
+        oversold_row = df.iloc[oversold_idx]
+        oversold_triggered = bool(
+            oversold_row["j"] < config.J_OVERSOLD_THRESHOLD
+            or (
+                oversold_row["j"] < config.J_LOW_THRESHOLD
+                and oversold_row["k"] < config.K_LOW_THRESHOLD
+            )
+        )
 
         notes = []
-        if min_pullback_volume < pullback_df["vol_ma5"].fillna(float("inf")).min():
-            notes.append("回调最低量低于阶段5日均量")
-        if strong_volume_breakout:
-            notes.append("突破量能达到回调均量2倍以上")
+        if oversold_row["j"] < config.J_OVERSOLD_THRESHOLD:
+            notes.append("J值进入负值超卖区")
+        else:
+            notes.append("J<10 且 K<20，处于低位超卖区")
+        if _is_doji_like(pattern_row):
+            notes.append("超卖日或次日出现缩量十字星")
+        elif _is_hammer_like(pattern_row):
+            notes.append("超卖日或次日出现缩量锤头线")
 
         market_reason = (
-            f"大盘过滤通过：上证指数信号日 {market_env['signal_date']}，"
+            f"大盘过滤：上证指数信号日 {market_env['signal_date']}，"
             f"MA20之上={market_env['above_ma20']}，单日涨幅>1%={market_env['gain_gt_1pct']}"
         )
-        doji_reason = (
-            f"十字星日期 {str(doji['date'].date())}，前{config.PREV_DROP_LOOKBACK}日跌幅 {round(float(drop_pct), 2)}%，"
-            f"当日成交量 {int(doji['volume'])} 低于5日均量 {int(doji['vol_ma5'])}"
+        bottom_reason = (
+            f"个股底部过滤：{bottom_region_text}"
         )
         surge_reason = (
             f"启动阳线日期 {str(surge['date'].date())}，涨幅 {round(float(surge['daily_gain_pct']), 2)}%，"
-            f"量比5日均量 {round(float(surge['volume'] / surge['vol_ma5']), 2)} 倍"
+            f"量比5日均量 {round(float(surge_volume_ratio), 2)} 倍"
         )
         pullback_reason = (
-            f"回调 {pullback_days} 天，最低价 {round(float(pullback_df['low'].min()), 3)} 未跌破十字星低点 {round(float(doji['low']), 3)}；"
+            f"回调 {pullback_days} 天；J值超卖日 {str(oversold_row['date'].date())}，J={round(float(oversold_row['j']), 2)}，"
+            f"K={round(float(oversold_row['k']), 2)}；形态确认日 {str(pattern_row['date'].date())} 为十字星/锤头，"
             f"最小成交量/启动量 = {round(float(min_pullback_volume / surge['volume']), 3)}"
         )
-        breakout_reason = (
-            f"当前收盘 {round(float(today['close']), 3)} 突破启动高点 {round(float(surge['high']), 3)}；"
-            f"当日量能较昨日放大且高于5日均量，量比5日均量 {round(float(today['volume'] / today['vol_ma5']), 2)}"
+        trigger_reason = (
+            f"今日收盘 {round(float(today['close']), 3)} 高于昨日收盘 {round(float(yesterday['close']), 3)}，"
+            f"J值 {round(float(today['j']), 2)} > 昨日 {round(float(yesterday['j']), 2)}，"
+            f"成交量 {int(today['volume'])} > 昨日 {int(yesterday['volume'])}"
         )
 
         return SignalResult(
             code=code,
             name=name,
             signal_date=str(today["date"].date()),
-            market_passed=True,
-            doji_date=str(doji["date"].date()),
+            market_passed=market_passed,
+            bottom_region_passed=bottom_region_passed,
+            pattern_date=str(pattern_row["date"].date()),
             surge_date=str(surge["date"].date()),
-            breakout_price=round(float(today["close"]), 3),
-            breakout_gain_pct=round(float(today["daily_gain_pct"]), 2),
-            breakout_volume_ratio_vs_5ma=round(float(today["volume"] / today["vol_ma5"]), 2),
+            signal_price=round(float(today["close"]), 3),
+            signal_gain_pct=round(float(today["daily_gain_pct"]), 2),
+            signal_volume_ratio_vs_5ma=round(float(today["volume"] / today["vol_ma5"]), 2) if pd.notna(today["vol_ma5"]) and today["vol_ma5"] > 0 else 0.0,
             pullback_days=pullback_days,
             pullback_volume_ratio=round(float(min_pullback_volume / surge["volume"]), 3),
-            strong_volume_breakout=strong_volume_breakout,
-            market_reason=market_reason,
-            doji_reason=doji_reason,
+            j_turn_up=bool(today["j"] > yesterday["j"]),
+            oversold_triggered=oversold_triggered,
+            market_reason=market_reason if market_passed else "大盘未站上MA20，依赖个股底部区域信号",
+            bottom_reason=bottom_reason,
             surge_reason=surge_reason,
             pullback_reason=pullback_reason,
-            breakout_reason=breakout_reason,
-            notes="；".join(notes) if notes else "满足基础N字突破条件",
+            trigger_reason=trigger_reason,
+            notes="；".join(notes) if notes else "满足基础KDJ超卖N字反转条件",
         )
 
     return None
