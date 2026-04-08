@@ -113,7 +113,7 @@ def build_signal_message(signal_rows: list[dict]) -> str:
             lines.append(f"涨幅/量比: {row['signal_gain_pct']}% / {row['signal_volume_ratio_vs_5ma']}")
             lines.append(f"触发: {row['trigger_reason']}")
             if row.get("fallback_reason"):
-                lines.append(f"候选原因: {row['fallback_reason']}")
+                lines.append(f"缺少触发条件: {row['fallback_reason']}")
             lines.append(f"说明: {row['notes']}")
             lines.append("")
     return "\n".join(lines).strip()
