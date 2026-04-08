@@ -1,0 +1,44 @@
+"""
+N字战法 + 底部十字星策略配置
+"""
+
+import os
+
+# 数据获取与缓存
+HISTORY_DAYS = 220
+MAX_WORKERS = 8
+MAX_RETRY = 2
+DB_PATH = os.path.join(os.path.dirname(__file__) or ".", "n_strategy.db")
+STOCK_LIST_CACHE_TTL = 24 * 3600
+
+# 大盘过滤
+MARKET_INDEX_CODE = "000001"  # 上证指数
+MARKET_MA_PERIOD = 20
+MARKET_DAILY_GAIN_PCT = 1.0
+
+# 阶段一：底部十字星
+DOJI_LOOKBACK_MIN = 5
+DOJI_LOOKBACK_MAX = 15
+PREV_DROP_LOOKBACK = 20
+PREV_DROP_THRESHOLD = -15.0
+DOJI_BODY_TO_RANGE_MAX = 1 / 3
+DOJI_SHADOW_SIMILARITY_MAX = 0.4
+
+# 阶段二：第一笔拉升
+SURGE_GAIN_PCT = 5.0
+SURGE_VOLUME_RATIO = 1.5
+
+# 阶段三：缩量回调
+PULLBACK_DAYS_MIN = 2
+PULLBACK_DAYS_MAX = 5
+PULLBACK_VOLUME_SHRINK = 0.5
+
+# 阶段四：突破确认
+BREAKOUT_PULLBACK_VOLUME_MULTIPLIER = 2.0
+
+# 输出
+RESULT_OUTPUT = "n_strategy_signals.csv"
+
+# 通知
+FEISHU_ENABLED = True
+FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")

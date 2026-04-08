@@ -1,0 +1,10 @@
+name: n-strategy
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pandas>=2.2
+  - numpy>=1.26
+  - requests>=2.32
+  - pip

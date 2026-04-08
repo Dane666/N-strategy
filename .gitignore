@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+.mypy_cache/
+.venv/
+n_strategy.db
+n_strategy_signals.csv
+*.log
